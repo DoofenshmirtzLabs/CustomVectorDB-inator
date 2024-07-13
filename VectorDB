@@ -1,0 +1,190 @@
+from PyPDF2 import PdfReader
+from docx import Document
+from pptx import Presentation
+from sentence_transformers import SentenceTransformer
+import os
+import json
+import pandas as pd
+import numpy as np
+from numpy.linalg import norm
+
+
+
+DATA_DIR = 'C:\\Users\\user\\ahhshit\\temp'
+embeddings=[]
+
+def fetchUserDict(UserID):
+    user_data_file = os.path.join(DATA_DIR, f'{UserID}.json')
+    if os.path.exists(user_data_file):
+        with open(user_data_file, 'r') as f:
+            return json.load(f)
+    return {}
+
+def saveUserDict(UserID, data):
+    user_data_file = os.path.join(DATA_DIR, f'{UserID}.json')
+    with open(user_data_file, 'w') as f:
+        json.dump(data, f)
+
+def POSTembeddings(UserID,BookId,pageno,pagetext,embeddings):
+    User_dict=fetchUserDict(UserID)
+    if BookId not in User_dict:
+        User_dict[BookId]={}
+       
+    
+    if pageno not in User_dict[BookId]:
+        User_dict[BookId][pageno] = {}
+    User_dict[BookId][pageno][pagetext]=embeddings
+    
+    print("embeddings added succesfully \n")
+    saveUserDict(UserID, User_dict)
+   
+
+
+def retrive_topk(query_embeddings, UserID, top_k):
+    User_dict = fetchUserDict(UserID)
+    similarities = []
+    
+    query_embeddings = np.array(query_embeddings, dtype=float)
+    
+    
+    
+    for BookId, pageno in User_dict.items():
+        for pagenum, page_content in pageno.items():
+            for text, embeddings in page_content.items():
+                embeddings = np.array(embeddings, dtype=float)
+                
+                print(f"Query embeddings shape: {query_embeddings.shape}")
+                print(f"Embeddings shape: {embeddings.shape}")
+                
+                # Check if embeddings has an extra dimension
+                if embeddings.ndim > 1:
+                    embeddings = embeddings.squeeze()
+                    print(f"Reshaped embeddings: {embeddings.shape}")
+                
+                similarity_score = np.dot(query_embeddings, embeddings) / (norm(query_embeddings) * norm(embeddings))
+                similarities.append((BookId, pagenum, text, embeddings, similarity_score))
+    
+    # Sort similarities based on similarity_score (index 4) in descending order
+    similarities.sort(key=lambda x: x[4], reverse=True)
+    
+    # Return top_k results
+    top_k_results = similarities[:top_k]
+
+# Adjust the return statement based on your specific needs
+    return top_k_results
+
+
+
+
+def GETUserBooks(UserID):
+    User_dict=fetchUserDict(UserID)
+    return [bookid for bookid in User_dict]
+        
+def DELUserBook(UserID, BookID):
+    User_dict = fetchUserDict(UserID)
+    
+    if BookID in User_dict:
+        del User_dict[BookID]
+        saveUserDict(UserID, User_dict)
+        print(f"Book '{BookID}' removed from library.")
+    else:
+        print(f"Book '{BookID}' does not exist in the library.")
+
+# Load the model from the Sentence Transformers Hub
+model_name = "all-MiniLM-L6-v2"  # Replace with your desired model name
+model = SentenceTransformer(model_name)
+
+def get_embeddings(text):
+ 
+  # Ensure input is a list or string
+  if not isinstance(text, (list, str)):
+    raise TypeError("Input text must be a string or a list of strings.")
+
+  # Convert single string to a list for consistent processing
+  if isinstance(text, str):
+    text = [text]
+
+  # Generate embeddings using the model
+  embeddings = model.encode(text)
+
+  # Return the embeddings
+  return embeddings
+
+def read_content(file_path,file_name,UserID):
+  """
+  Reads the content of a file based on its format, handling PDF, Word, and PPT presentations.
+  """
+  # Detect file format based on extension
+  if file_path.endswith(".pdf"):
+    with open(file_path, 'rb') as pdf_file:
+      reader = PdfReader(pdf_file)
+      num_pages = len(reader.pages)
+      for page_num in range(num_pages):
+        page = reader.pages[page_num]
+        text = page.extract_text()
+        print("text: ",text)
+        print("\n")
+        page_embeddings=get_embeddings(text)
+        embeddings = page_embeddings.tolist()
+        POSTembeddings(UserID,file_name,page_num,text,embeddings)
+          
+  elif file_path.endswith(".docx"):
+    document = Document(file_path)
+    for page_num, page in enumerate(document.paragraphs):
+      text = page.text.strip()  # Remove leading/trailing whitespace
+      if text: 
+              # Print only if there's text on the page
+            print(text)
+            print("\n")
+            page_embeddings=get_embeddings(text)
+              
+            embeddings = page_embeddings.tolist()
+            POSTembeddings(UserID,file_name,page_num,text,embeddings)
+  elif file_path.endswith(".ppt") or file_path.endswith(".pptx"):
+    presentation = Presentation(file_path)
+    for slide_num, slide in enumerate(presentation.slides):
+      text = ""
+      # Extract text from slide elements (shapes, text boxes)
+      for shape in slide.shapes:
+        if shape.has_text_frame:
+          text += shape.text_frame.text
+    print(text)
+    print("\n")
+    page_embeddings=get_embeddings(text)
+    embeddings = page_embeddings.tolist()
+    POSTembeddings(UserID,file_name,slide_num,text,embeddings)
+   
+        
+  else:
+    print(f"Unsupported file format: {file_path}")
+
+# Example usage
+
+
+word_path = "C:\\Users\\user\\Downloads\\YACC_BISON Programs.docx"
+read_content(word_path,file_name="YACC",UserID='user1')
+
+ppt_path = "C:\\Users\\user\\Downloads\\UNIT 6.pptx"
+read_content(ppt_path,file_name="unit 6",UserID='user1')
+
+user_books=GETUserBooks(UserID='user1')
+def GETembeddingsByBook(UserID,BookID):
+    User_dict=fetchUserdict(UserID)
+    return User_dict[BookID]
+def query_embedding(query):
+    query_embedding=model.encode(query)
+    return query_embedding
+
+query_embeddings=query_embedding(query)
+results=retrive_topk(query_embeddings,UserID='user1',top_k=3)
+for bookid, embeddings, pageno,text, similarity_score in results:
+    # Step 3: Decode embeddings to text
+     # Ensure embeddings are reshaped if necessary
+    
+    # Step 4: Print results
+    print("Text:", text)
+    print("Book ID:", bookid)
+    print("Page Number:", pageno)
+    print("text:",text)
+    print("Similarity Score:", similarity_score)
+    print("\n")
