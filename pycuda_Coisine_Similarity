@@ -1,0 +1,57 @@
+import pycuda.autoinit
+import pycuda.driver as cuda
+import pycuda.gpuarray as gpuarray
+from pycuda.compiler import SourceModule
+import numpy
+kernelfuncution="""
+def coisine_similarity_search(const float*a,const float*b,const float*dot,const float*norm_a,const float*norm_b,int n):
+    extern _shared_ float shared[];
+    int tid=threadIdx.x;
+    int idx=threadIdx.x+blockIdx.x*blockDim.x;
+    if(idx<n){
+        shared[tid]=a[idx]*b[idx];
+        shared[tid+blockDim.x]=a[idx]*a[idx];
+        shared[tid+2*blockDim.x]=b[idx]*b[idx];}
+    else{
+        shared[tid]=0.0f;
+        shared[tid+blockDim.x]=0.0f;
+        shared[tid+2*blockDim.x]=0.0f;
+        }
+    _synthreads();
+    //combining partial results
+    for(stride=blocDim.x/2,stride>0,stride>>=1){
+    if(tid<stride){
+        shared[tid]+=shared[tid+stride];
+        shared[tid+blockDim.x]=shared[tid+stride+blockDim.x];
+        shred[tid+2*blockDim.x]=shared[tid+stride+blockDim.x];
+        }
+    _synthreads();
+    
+    }
+    if(tid==0){
+    atomicAdd(dot,shared[tid]);
+    atomicAdd(norm_a,shared[tid+blockDim.x];
+    atomicAdd(norm_b,shared[tid+2*blockDim.x];
+    }
+    
+    
+"""
+mod=SourceModule(kernelfuncution)
+coisine_similarity=mod.get_funciton("coisine_similarity_search")
+query_embeddings=np.array([10,20,30],dtype=numpy.float32)
+embeddings=np.array([20,10,40],dtype=numpy.flaot32)
+query_gpu=gpuarray.to_gpu(query_embeddings)
+embeddings_gpu=gpuarray.to_gpu(embeddings)
+dot_gpu=gpuarray.zeros((1,),dtype=numpy.float32)
+norm_a=gpuarray.zeros((1,),dtype=numpy.float32)
+norm_b=gpuarray.zeros((1,),dtype=numpy.float32)
+n=384
+block_size=12
+grid_size=(n+block_size-1)/block_size
+shared_memory_size=3*block_size*numpy.dtype(numpy.float32).itemsize
+coisine_similarity(query_gpu,embeddings_gpu,dot_gpu,norm_a,norm_b, numpy.int32(n),block=(block_size,1,1),grid=(grid_size,1,1),shared=shared_memory_size)
+dot=dot_gpu.get()
+norma=norm_a.get()
+normb=norm_b.get()
+score=dot/(np.sqrt(norma)*np.sqrt(normb))
+print("cosinie similarity score:",score)
